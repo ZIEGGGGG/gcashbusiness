@@ -13,7 +13,7 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 st.set_page_config(
     page_title="GCash Cash In / Cash Out",
     page_icon="💙",
-    layout="centered"
+    layout="wide"  # full-width for mobile
 )
 
 # ================= STYLE =================
@@ -22,7 +22,7 @@ st.markdown("""
 body { background-color: #f5f9ff; }
 .main {
     background-color: white;
-    padding: 2rem;
+    padding: 1rem;
     border-radius: 12px;
 }
 h1, h2, h3 { color: #0057ff; }
@@ -35,6 +35,9 @@ h1, h2, h3 { color: #0057ff; }
 }
 .stButton > button:hover {
     background-color: #0041cc;
+}
+[data-testid="stFileUploaderDropzone"] {
+    min-height: 3rem;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -62,15 +65,14 @@ def compute_service_fee(amount):
         return 0
     return math.ceil(amount / 250) * 5
 
-# ================= LOAD DATA SAFELY =================
+# ================= LOAD DATA =================
 try:
     if os.path.exists(EXCEL_FILE):
         df = pd.read_excel(EXCEL_FILE, engine="openpyxl")
-        # Ensure old Total column is removed if exists
-        if "Total Received / Released" in df.columns:
-            df.drop(columns=["Total Received / Released"], inplace=True)
-        if "Payment Method" in df.columns:
-            df.drop(columns=["Payment Method"], inplace=True)
+        # Remove old columns if exist
+        for col in ["Total Received / Released", "Payment Method"]:
+            if col in df.columns:
+                df.drop(columns=[col], inplace=True)
         df.to_excel(EXCEL_FILE, index=False, engine="openpyxl")
     else:
         df = create_excel()
@@ -148,12 +150,60 @@ if submit:
 # ================= RECORDS =================
 st.subheader("📋 Transaction Records")
 
-# Show screenshot as clickable link
-def make_clickable(filename):
+# Show screenshot as thumbnail for mobile
+def make_thumbnail(filename):
     path = os.path.join(UPLOAD_FOLDER, filename)
-    return f"[View Screenshot]({path})"
+    return f'<a href="{path}" target="_blank"><img src="{path}" width="80"></a>'
 
 if not df.empty:
     display_df = df.copy()
-    display_df["Reference Screenshot"] = display_df["Reference Screenshot"].apply(make_clickable)
-    st.dataframe(display_df, use_container_width=True)
+    display_df["Reference Screenshot"] = display_df["Reference Screenshot"].apply(make_thumbnail)
+    st.write(display_df.to_html(escape=False, index=False), unsafe_allow_html=True)
+
+# ================= DELETE TRANSACTION =================
+st.subheader("🗑 Delete Transaction")
+
+if df.empty:
+    st.info("No transactions available to delete.")
+else:
+    # Create readable labels for selection
+    df["__label"] = (
+        df.index.astype(str) + " | " +
+        df["Date"].astype(str) + " | " +
+        df["Customer Name"].astype(str) + " | ₱" +
+        df["Amount"].astype(str)
+    )
+
+    selected = st.selectbox(
+        "Select transaction to delete",
+        df["__label"].tolist()
+    )
+
+    confirm = st.checkbox("⚠ I confirm that I want to permanently delete this transaction")
+
+    if st.button("❌ Delete Selected Transaction"):
+        if not confirm:
+            st.warning("Please confirm deletion first.")
+        else:
+            # Get row index
+            row_index = int(selected.split(" | ")[0])
+
+            # Delete screenshot file
+            screenshot_file = df.loc[row_index, "Reference Screenshot"]
+            screenshot_path = os.path.join(UPLOAD_FOLDER, screenshot_file)
+            if os.path.exists(screenshot_path):
+                os.remove(screenshot_path)
+
+            # Drop row
+            df.drop(index=row_index, inplace=True)
+            df.reset_index(drop=True, inplace=True)
+
+            # Remove helper column
+            if "__label" in df.columns:
+                df.drop(columns=["__label"], inplace=True)
+
+            # Save back to Excel
+            df.to_excel(EXCEL_FILE, index=False, engine="openpyxl")
+
+            st.success("✅ Transaction deleted successfully!")
+            st.rerun()
