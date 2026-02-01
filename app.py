@@ -89,8 +89,11 @@ def load_data():
         df = create_excel()
     return df
 
-# ================= LOAD DATA =================
-df = load_data()
+# ================= LOAD DATA WITH SESSION STATE =================
+if "df" not in st.session_state:
+    st.session_state.df = load_data()
+
+df = st.session_state.df
 
 # ================= SIDEBAR NAVIGATION =================
 st.sidebar.title("💙 GCash System Navigation")
@@ -162,19 +165,19 @@ if page == "Transaction Form & History":
                 "Remarks": remarks
             }
 
-            df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-            save_with_images(df, EXCEL_FILE)
+            st.session_state.df = pd.concat([st.session_state.df, pd.DataFrame([new_row])], ignore_index=True)
+            save_with_images(st.session_state.df, EXCEL_FILE)
             st.success("✅ Transaction saved successfully!")
             st.experimental_rerun()
 
     # ================= TRANSACTION RECORDS =================
     st.subheader("📋 Transaction Records")
-    if not df.empty:
+    if not st.session_state.df.empty:
         def make_thumbnail(filename):
             path = os.path.join(UPLOAD_FOLDER, filename)
             return f'<a href="{path}" target="_blank"><img src="{path}" width="80"></a>'
 
-        display_df = df.copy()
+        display_df = st.session_state.df.copy()
         display_df["Reference Screenshot"] = display_df["Reference Screenshot"].apply(make_thumbnail)
         st.write(display_df.to_html(escape=False, index=False), unsafe_allow_html=True)
 
@@ -191,7 +194,7 @@ if page == "Transaction Form & History":
 # ================= PAGE 2: ADMIN DELETE =================
 elif page == "Admin Delete Transactions":
     st.title("🗑 Admin - Delete Transactions")
-    if df.empty:
+    if st.session_state.df.empty:
         st.info("No transactions available to delete.")
     else:
         username = st.text_input("Admin Username")
@@ -204,16 +207,16 @@ elif page == "Admin Delete Transactions":
             else:
                 st.success("✅ Logged in successfully! You can now delete transactions.")
 
-                df["__label"] = (
-                    df.index.astype(str) + " | " +
-                    df["Date"].astype(str) + " | " +
-                    df["Customer Name"].astype(str) + " | ₱" +
-                    df["Amount"].astype(str)
+                st.session_state.df["__label"] = (
+                    st.session_state.df.index.astype(str) + " | " +
+                    st.session_state.df["Date"].astype(str) + " | " +
+                    st.session_state.df["Customer Name"].astype(str) + " | ₱" +
+                    st.session_state.df["Amount"].astype(str)
                 )
 
                 selected = st.selectbox(
                     "Select transaction to delete",
-                    df["__label"].tolist()
+                    st.session_state.df["__label"].tolist()
                 )
 
                 confirm = st.checkbox("⚠ I confirm that I want to permanently delete this transaction")
@@ -223,17 +226,16 @@ elif page == "Admin Delete Transactions":
                         st.warning("Please confirm deletion first.")
                     else:
                         row_index = int(selected.split(" | ")[0])
-                        screenshot_file = df.loc[row_index, "Reference Screenshot"]
+                        screenshot_file = st.session_state.df.loc[row_index, "Reference Screenshot"]
                         screenshot_path = os.path.join(UPLOAD_FOLDER, screenshot_file)
                         if os.path.exists(screenshot_path):
                             os.remove(screenshot_path)
 
-                        df.drop(index=row_index, inplace=True)
-                        df.reset_index(drop=True, inplace=True)
+                        # Delete row from session_state df
+                        st.session_state.df = st.session_state.df.drop(index=row_index).reset_index(drop=True)
 
-                        if "__label" in df.columns:
-                            df.drop(columns=["__label"], inplace=True)
+                        # Save updated df to Excel
+                        save_with_images(st.session_state.df, EXCEL_FILE)
 
-                        save_with_images(df, EXCEL_FILE)
                         st.success("✅ Transaction deleted successfully!")
                         st.experimental_rerun()
