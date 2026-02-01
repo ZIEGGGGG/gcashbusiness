@@ -4,27 +4,29 @@ from datetime import datetime
 import os
 from PIL import Image
 import math
+from openpyxl import load_workbook
+from openpyxl.drawing.image import Image as XLImage
 
 # ================= CONFIG =================
 EXCEL_FILE = "GCash_Cash_In_Cash_Out_Record.xlsx"
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
+# Admin credentials
+ADMIN_USERNAME = "jepollogcash"
+ADMIN_PASSWORD = "jepollogcash"
+
 st.set_page_config(
     page_title="GCash Cash In / Cash Out",
     page_icon="💙",
-    layout="wide"  # full-width for mobile
+    layout="wide"
 )
 
 # ================= STYLE =================
 st.markdown("""
 <style>
 body { background-color: #f5f9ff; }
-.main {
-    background-color: white;
-    padding: 1rem;
-    border-radius: 12px;
-}
+.main { background-color: white; padding: 1rem; border-radius: 12px; }
 h1, h2, h3 { color: #0057ff; }
 .stButton > button {
     background-color: #0057ff;
@@ -33,12 +35,8 @@ h1, h2, h3 { color: #0057ff; }
     height: 45px;
     font-weight: bold;
 }
-.stButton > button:hover {
-    background-color: #0041cc;
-}
-[data-testid="stFileUploaderDropzone"] {
-    min-height: 3rem;
-}
+.stButton > button:hover { background-color: #0041cc; }
+[data-testid="stFileUploaderDropzone"] { min-height: 3rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -78,6 +76,21 @@ try:
         df = create_excel()
 except Exception:
     df = create_excel()
+
+# ================= EMBED IMAGES IN EXCEL =================
+def save_with_images(df, excel_file):
+    df_copy = df.copy()
+    df_copy.to_excel(excel_file, index=False, engine="openpyxl")
+    wb = load_workbook(excel_file)
+    ws = wb.active
+    for i, filename in enumerate(df_copy["Reference Screenshot"], start=2):  # start=2 for header
+        img_path = os.path.join(UPLOAD_FOLDER, filename)
+        if os.path.exists(img_path):
+            img = XLImage(img_path)
+            img.width = 80
+            img.height = 80
+            ws.add_image(img, f"F{i}")  # column F = Reference Screenshot
+    wb.save(excel_file)
 
 # ================= FORM =================
 st.subheader("🧾 Cashier Transaction Form")
@@ -126,7 +139,6 @@ if submit:
     elif screenshot is None:
         st.error("❌ Reference screenshot is required.")
     else:
-        # Save screenshot
         filename = f"gcash_{datetime.now().strftime('%Y%m%d%H%M%S')}.png"
         filepath = os.path.join(UPLOAD_FOLDER, filename)
         Image.open(screenshot).save(filepath)
@@ -142,15 +154,13 @@ if submit:
         }
 
         df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-        df.to_excel(EXCEL_FILE, index=False, engine="openpyxl")
-
+        save_with_images(df, EXCEL_FILE)
         st.success("✅ Transaction saved successfully!")
         st.rerun()
 
 # ================= RECORDS =================
 st.subheader("📋 Transaction Records")
 
-# Show screenshot as thumbnail for mobile
 def make_thumbnail(filename):
     path = os.path.join(UPLOAD_FOLDER, filename)
     return f'<a href="{path}" target="_blank"><img src="{path}" width="80"></a>'
@@ -160,50 +170,60 @@ if not df.empty:
     display_df["Reference Screenshot"] = display_df["Reference Screenshot"].apply(make_thumbnail)
     st.write(display_df.to_html(escape=False, index=False), unsafe_allow_html=True)
 
-# ================= DELETE TRANSACTION =================
-st.subheader("🗑 Delete Transaction")
+    # ================= DOWNLOAD BUTTON =================
+    st.download_button(
+        label="⬇ Download Transaction Records as Excel",
+        data=open(EXCEL_FILE, "rb").read(),
+        file_name="GCash_Cash_In_Cash_Out_Record.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+# ================= DELETE TRANSACTION (ADMIN) =================
+st.subheader("🗑 Delete Transaction (Admin Only)")
 
 if df.empty:
     st.info("No transactions available to delete.")
 else:
-    # Create readable labels for selection
-    df["__label"] = (
-        df.index.astype(str) + " | " +
-        df["Date"].astype(str) + " | " +
-        df["Customer Name"].astype(str) + " | ₱" +
-        df["Amount"].astype(str)
-    )
+    username = st.text_input("Admin Username")
+    password = st.text_input("Admin Password", type="password")
+    login_button = st.button("🔒 Login for Delete")
 
-    selected = st.selectbox(
-        "Select transaction to delete",
-        df["__label"].tolist()
-    )
-
-    confirm = st.checkbox("⚠ I confirm that I want to permanently delete this transaction")
-
-    if st.button("❌ Delete Selected Transaction"):
-        if not confirm:
-            st.warning("Please confirm deletion first.")
+    if login_button:
+        if username != ADMIN_USERNAME or password != ADMIN_PASSWORD:
+            st.error("❌ Invalid username or password")
         else:
-            # Get row index
-            row_index = int(selected.split(" | ")[0])
+            st.success("✅ Logged in successfully! You can now delete transactions.")
 
-            # Delete screenshot file
-            screenshot_file = df.loc[row_index, "Reference Screenshot"]
-            screenshot_path = os.path.join(UPLOAD_FOLDER, screenshot_file)
-            if os.path.exists(screenshot_path):
-                os.remove(screenshot_path)
+            df["__label"] = (
+                df.index.astype(str) + " | " +
+                df["Date"].astype(str) + " | " +
+                df["Customer Name"].astype(str) + " | ₱" +
+                df["Amount"].astype(str)
+            )
 
-            # Drop row
-            df.drop(index=row_index, inplace=True)
-            df.reset_index(drop=True, inplace=True)
+            selected = st.selectbox(
+                "Select transaction to delete",
+                df["__label"].tolist()
+            )
 
-            # Remove helper column
-            if "__label" in df.columns:
-                df.drop(columns=["__label"], inplace=True)
+            confirm = st.checkbox("⚠ I confirm that I want to permanently delete this transaction")
 
-            # Save back to Excel
-            df.to_excel(EXCEL_FILE, index=False, engine="openpyxl")
+            if st.button("❌ Delete Selected Transaction"):
+                if not confirm:
+                    st.warning("Please confirm deletion first.")
+                else:
+                    row_index = int(selected.split(" | ")[0])
+                    screenshot_file = df.loc[row_index, "Reference Screenshot"]
+                    screenshot_path = os.path.join(UPLOAD_FOLDER, screenshot_file)
+                    if os.path.exists(screenshot_path):
+                        os.remove(screenshot_path)
 
-            st.success("✅ Transaction deleted successfully!")
-            st.rerun()
+                    df.drop(index=row_index, inplace=True)
+                    df.reset_index(drop=True, inplace=True)
+
+                    if "__label" in df.columns:
+                        df.drop(columns=["__label"], inplace=True)
+
+                    save_with_images(df, EXCEL_FILE)
+                    st.success("✅ Transaction deleted successfully!")
+                    st.rerun()
