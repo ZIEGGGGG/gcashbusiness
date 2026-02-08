@@ -49,7 +49,6 @@ def load_data():
         df = pd.read_excel(EXCEL_FILE)
     else:
         df = create_excel()
-
     # Ensure all expected columns exist
     expected_cols = ["Date", "Type", "Customer", "Amount", "Service Fee", "Screenshot", "Remarks"]
     for col in expected_cols:
@@ -62,15 +61,12 @@ def recalc_balances(df):
     gcash_balance = CAPITAL
     total_cash = 0
     total_profit = 0
-
     for _, row in df.iterrows():
         txn_type = row.get("Type", "")
         amount = row.get("Amount", 0)
         fee = row.get("Service Fee", 0)
-
         if pd.isna(txn_type) or pd.isna(amount):
             continue
-
         if txn_type == "Cash In":
             gcash_balance += amount
             total_cash += amount
@@ -79,7 +75,6 @@ def recalc_balances(df):
             total_cash -= amount
             gcash_balance += amount
             total_profit += fee
-
     return gcash_balance, total_cash, total_profit
 
 # ================= LOAD DATA =================
@@ -230,4 +225,10 @@ with tab3:
                     if os.path.exists(path):
                         os.remove(path)
 
-                    df.drop(index
+                    df.drop(index=idx, inplace=True)
+                    df.reset_index(drop=True, inplace=True)
+                    save_with_images(df)
+                    st.success("✅ Transaction deleted")
+                    st.rerun()
+                else:
+                    st.warning("Please confirm deletion first.")
