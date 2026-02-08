@@ -100,7 +100,7 @@ else:
 
 # Track GCash amount and cash amount separately
 gcash_balance = CAPITAL + cash_in - cash_out  # GCash balance after transactions
-total_cash = total_profit  # Total cash includes profits
+total_cash = CAPITAL + total_profit + cash_in  # Total cash includes main capital + cash ins + total profit
 
 # Store balances in session state for persistence
 if "gcash_balance" not in st.session_state:
@@ -108,6 +108,9 @@ if "gcash_balance" not in st.session_state:
 
 if "total_cash" not in st.session_state:
     st.session_state.total_cash = total_cash
+
+if "total_profit" not in st.session_state:
+    st.session_state.total_profit = total_profit
 
 # ================= HEADER =================
 st.title("💙 GCash Cash In / Cash Out System")
@@ -135,7 +138,7 @@ with tab1:
         txn_type = st.selectbox("Transaction Type", ["Cash In", "Cash Out"])
         customer = st.text_input("Customer Name")
         amount = st.number_input("Amount", min_value=1.0, step=1.0)
-
+        
         fee = compute_service_fee(amount)
         st.info(f"Service Fee: ₱{fee}")
 
@@ -166,12 +169,14 @@ with tab1:
 
             # Update balances based on transaction type
             if txn_type == "Cash In":
-                st.session_state.total_cash += amount + fee  # Add cash and profit (fee)
+                st.session_state.gcash_balance += amount  # Increase GCash funds
+                st.session_state.total_cash += (amount + fee)  # Add cash and profit (fee)
+                st.session_state.total_profit += fee  # Add to total profit
             elif txn_type == "Cash Out":
                 if amount > st.session_state.gcash_balance:
                     st.error("❌ Insufficient GCash balance.")
                 else:
-                    st.session_state.gcash_balance -= amount  # Subtract cash from GCash
+                    st.session_state.gcash_balance -= amount  # Decrease GCash funds
             
             df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
             save_with_images(df)
@@ -249,6 +254,7 @@ with tab3:
                         # Adjust balances based on transaction type
                         if df.loc[idx, "Type"] == "Cash In":
                             st.session_state.total_cash -= df.loc[idx, "Amount"] + df.loc[idx, "Service Fee"]
+                            st.session_state.total_profit -= df.loc[idx, "Service Fee"]
                         elif df.loc[idx, "Type"] == "Cash Out":
                             st.session_state.gcash_balance += df.loc[idx, "Amount"]
 
