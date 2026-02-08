@@ -12,7 +12,6 @@ EXCEL_FILE = "GCash_Cash_In_Cash_Out_Record.xlsx"
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# Admin credentials
 ADMIN_USERNAME = "jepollogcash"
 ADMIN_PASSWORD = "jepollogcash"
 
@@ -36,7 +35,6 @@ h1, h2, h3 { color: #0057ff; }
     font-weight: bold;
 }
 .stButton > button:hover { background-color: #0041cc; }
-[data-testid="stFileUploaderDropzone"] { min-height: 3rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -54,188 +52,156 @@ def create_excel():
     df.to_excel(EXCEL_FILE, index=False, engine="openpyxl")
     return df
 
-def compute_service_fee(amount):
-    if amount <= 0:
-        return 0
-    return math.ceil(amount / 250) * 5
-
-def save_with_images(df, excel_file):
-    """Save Excel and embed screenshots"""
-    df_copy = df.copy()
-    df_copy.to_excel(excel_file, index=False, engine="openpyxl")
-    wb = load_workbook(excel_file)
-    ws = wb.active
-    for i, filename in enumerate(df_copy["Reference Screenshot"], start=2):  # start=2 for header
-        img_path = os.path.join(UPLOAD_FOLDER, filename)
-        if os.path.exists(img_path):
-            img = XLImage(img_path)
-            img.width = 80
-            img.height = 80
-            ws.add_image(img, f"F{i}")  # column F = Reference Screenshot
-    wb.save(excel_file)
-
 def load_data():
-    try:
-        if os.path.exists(EXCEL_FILE):
-            df = pd.read_excel(EXCEL_FILE, engine="openpyxl")
-            # Remove old columns if exist
-            for col in ["Total Received / Released", "Payment Method"]:
-                if col in df.columns:
-                    df.drop(columns=[col], inplace=True)
-            df.to_excel(EXCEL_FILE, index=False, engine="openpyxl")
-        else:
-            df = create_excel()
-    except Exception:
-        df = create_excel()
-    return df
+    if os.path.exists(EXCEL_FILE):
+        return pd.read_excel(EXCEL_FILE, engine="openpyxl")
+    return create_excel()
 
-# ================= LOAD DATA WITH SESSION STATE =================
+def compute_service_fee(amount):
+    return math.ceil(amount / 250) * 5 if amount > 0 else 0
+
+def save_with_images(df):
+    df.to_excel(EXCEL_FILE, index=False, engine="openpyxl")
+    wb = load_workbook(EXCEL_FILE)
+    ws = wb.active
+
+    for i, file in enumerate(df["Reference Screenshot"], start=2):
+        path = os.path.join(UPLOAD_FOLDER, str(file))
+        if os.path.exists(path):
+            img = XLImage(path)
+            img.width = img.height = 80
+            ws.add_image(img, f"F{i}")
+
+    wb.save(EXCEL_FILE)
+
+# ================= SESSION STATE =================
 if "df" not in st.session_state:
     st.session_state.df = load_data()
 
-df = st.session_state.df
+if "admin_logged_in" not in st.session_state:
+    st.session_state.admin_logged_in = False
 
-# ================= SIDEBAR NAVIGATION =================
-st.sidebar.title("💙 GCash System Navigation")
+# ================= SIDEBAR =================
+st.sidebar.title("💙 GCash System")
 page = st.sidebar.radio(
-    "Go to:",
+    "Navigation",
     ["Transaction Form & History", "Admin Delete Transactions"]
 )
 
-# ================= PAGE 1: TRANSACTION FORM & HISTORY =================
+# ================= PAGE 1 =================
 if page == "Transaction Form & History":
-    st.title("💙 GCash Cash In / Cash Out System")
-    st.caption("Cashier transaction recording system")
+    st.title("💙 GCash Cash In / Cash Out")
 
-    st.subheader("🧾 Transaction Form")
-    with st.form("cashier_form"):
-        current_datetime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        st.text_input("Date & Time", value=current_datetime, disabled=True)
+    with st.form("transaction_form"):
+        date_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        st.text_input("Date & Time", value=date_now, disabled=True)
 
-        transaction_type = st.selectbox(
-            "Transaction Type *",
-            ["", "Cash In", "Cash Out"]
-        )
+        t_type = st.selectbox("Transaction Type *", ["", "Cash In", "Cash Out"])
+        name = st.text_input("Customer Name *")
+        amount = st.number_input("Amount *", min_value=0.0, step=1.0)
 
-        customer_name = st.text_input("Customer Name *")
+        fee = compute_service_fee(amount)
+        st.number_input("Service Fee", value=fee, disabled=True)
 
-        amount = st.number_input(
-            "Amount *",
-            min_value=0.0,
-            step=1.0,
-            format="%.2f"
-        )
-
-        service_fee = compute_service_fee(amount)
-        st.number_input(
-            "Service Fee (Auto-calculated)",
-            value=float(service_fee),
-            disabled=True
-        )
-        st.caption("💡 Service Fee: ₱5 for every ₱250 (or part of ₱250)")
-
-        screenshot = st.file_uploader(
-            "Upload Reference Screenshot *",
-            type=["jpg", "jpeg", "png"]
-        )
-
-        remarks = st.text_input("Remarks (Optional)")
+        screenshot = st.file_uploader("Reference Screenshot *", ["jpg", "png", "jpeg"])
+        remarks = st.text_input("Remarks")
 
         submit = st.form_submit_button("💾 Save Transaction")
 
     if submit:
-        if not transaction_type or not customer_name:
-            st.error("❌ Please fill all required fields.")
-        elif amount <= 0:
-            st.error("❌ Amount must be greater than zero.")
-        elif screenshot is None:
-            st.error("❌ Reference screenshot is required.")
+        if not t_type or not name or amount <= 0 or not screenshot:
+            st.error("❌ Please complete all required fields")
         else:
             filename = f"gcash_{datetime.now().strftime('%Y%m%d%H%M%S')}.png"
-            filepath = os.path.join(UPLOAD_FOLDER, filename)
-            Image.open(screenshot).save(filepath)
+            Image.open(screenshot).save(os.path.join(UPLOAD_FOLDER, filename))
 
             new_row = {
-                "Date": current_datetime,
-                "Transaction Type": transaction_type,
-                "Customer Name": customer_name,
+                "Date": date_now,
+                "Transaction Type": t_type,
+                "Customer Name": name,
                 "Amount": amount,
-                "Service Fee": service_fee,
+                "Service Fee": fee,
                 "Reference Screenshot": filename,
                 "Remarks": remarks
             }
 
-            st.session_state.df = pd.concat([st.session_state.df, pd.DataFrame([new_row])], ignore_index=True)
-            save_with_images(st.session_state.df, EXCEL_FILE)
-            st.success("✅ Transaction saved successfully!")
-            st.experimental_rerun()
+            st.session_state.df = pd.concat(
+                [st.session_state.df, pd.DataFrame([new_row])],
+                ignore_index=True
+            )
 
-    # ================= TRANSACTION RECORDS =================
-    st.subheader("📋 Transaction Records")
+            save_with_images(st.session_state.df)
+            st.success("✅ Transaction saved")
+            st.rerun()
+
+    st.subheader("📋 Transaction History")
+
     if not st.session_state.df.empty:
-        def make_thumbnail(filename):
-            path = os.path.join(UPLOAD_FOLDER, filename)
-            return f'<a href="{path}" target="_blank"><img src="{path}" width="80"></a>'
+        def thumb(x):
+            p = os.path.join(UPLOAD_FOLDER, str(x))
+            return f'<img src="{p}" width="70">' if os.path.exists(p) else ""
 
-        display_df = st.session_state.df.copy()
-        display_df["Reference Screenshot"] = display_df["Reference Screenshot"].apply(make_thumbnail)
-        st.write(display_df.to_html(escape=False, index=False), unsafe_allow_html=True)
+        view_df = st.session_state.df.copy()
+        view_df["Reference Screenshot"] = view_df["Reference Screenshot"].apply(thumb)
+        st.write(view_df.to_html(escape=False, index=False), unsafe_allow_html=True)
 
-        # Download button
         st.download_button(
-            label="⬇ Download Transaction Records as Excel",
-            data=open(EXCEL_FILE, "rb").read(),
-            file_name="GCash_Cash_In_Cash_Out_Record.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            "⬇ Download Excel",
+            open(EXCEL_FILE, "rb").read(),
+            file_name=EXCEL_FILE
         )
     else:
-        st.info("No transactions recorded yet.")
+        st.info("No transactions yet")
 
-# ================= PAGE 2: ADMIN DELETE =================
-elif page == "Admin Delete Transactions":
-    st.title("🗑 Admin - Delete Transactions")
-    if st.session_state.df.empty:
-        st.info("No transactions available to delete.")
-    else:
-        username = st.text_input("Admin Username")
-        password = st.text_input("Admin Password", type="password")
-        login_button = st.button("🔒 Login for Delete")
+# ================= PAGE 2 =================
+else:
+    st.title("🗑 Admin Delete Transactions")
 
-        if login_button:
-            if username != ADMIN_USERNAME or password != ADMIN_PASSWORD:
-                st.error("❌ Invalid username or password")
+    if not st.session_state.admin_logged_in:
+        user = st.text_input("Admin Username")
+        pwd = st.text_input("Admin Password", type="password")
+
+        if st.button("🔒 Login"):
+            if user == ADMIN_USERNAME and pwd == ADMIN_PASSWORD:
+                st.session_state.admin_logged_in = True
+                st.success("✅ Logged in")
+                st.rerun()
             else:
-                st.success("✅ Logged in successfully! You can now delete transactions.")
+                st.error("❌ Invalid credentials")
+    else:
+        st.success("✅ Admin Logged In")
 
-                st.session_state.df["__label"] = (
-                    st.session_state.df.index.astype(str) + " | " +
-                    st.session_state.df["Date"].astype(str) + " | " +
-                    st.session_state.df["Customer Name"].astype(str) + " | ₱" +
-                    st.session_state.df["Amount"].astype(str)
+        labels = (
+            st.session_state.df.index.astype(str)
+            + " | "
+            + st.session_state.df["Date"]
+            + " | "
+            + st.session_state.df["Customer Name"]
+            + " | ₱"
+            + st.session_state.df["Amount"].astype(str)
+        )
+
+        choice = st.selectbox("Select transaction", labels)
+        confirm = st.checkbox("⚠ Confirm permanent deletion")
+
+        if st.button("❌ Delete"):
+            if not confirm:
+                st.warning("Please confirm deletion")
+            else:
+                idx = int(choice.split(" | ")[0])
+                file = st.session_state.df.loc[idx, "Reference Screenshot"]
+                path = os.path.join(UPLOAD_FOLDER, str(file))
+                if os.path.exists(path):
+                    os.remove(path)
+
+                st.session_state.df = (
+                    st.session_state.df.drop(idx).reset_index(drop=True)
                 )
 
-                selected = st.selectbox(
-                    "Select transaction to delete",
-                    st.session_state.df["__label"].tolist()
-                )
+                save_with_images(st.session_state.df)
+                st.success("✅ Deleted successfully")
+                st.rerun()
 
-                confirm = st.checkbox("⚠ I confirm that I want to permanently delete this transaction")
-
-                if st.button("❌ Delete Selected Transaction"):
-                    if not confirm:
-                        st.warning("Please confirm deletion first.")
-                    else:
-                        row_index = int(selected.split(" | ")[0])
-                        screenshot_file = st.session_state.df.loc[row_index, "Reference Screenshot"]
-                        screenshot_path = os.path.join(UPLOAD_FOLDER, screenshot_file)
-                        if os.path.exists(screenshot_path):
-                            os.remove(screenshot_path)
-
-                        # Delete row from session_state df
-                        st.session_state.df = st.session_state.df.drop(index=row_index).reset_index(drop=True)
-
-                        # Save updated df to Excel
-                        save_with_images(st.session_state.df, EXCEL_FILE)
-
-                        st.success("✅ Transaction deleted successfully!")
-                        st.experimental_rerun()
+        if st.button("🚪 Logout"):
+            st.session_state.admin_logged_in = False
+            st.rerun()
