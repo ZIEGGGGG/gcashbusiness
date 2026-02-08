@@ -49,7 +49,7 @@ def load_data():
         df = pd.read_excel(EXCEL_FILE)
     else:
         df = create_excel()
-    # Ensure all expected columns exist
+    
     expected_cols = ["Date", "Type", "Customer", "Amount", "Service Fee", "Screenshot", "Remarks"]
     for col in expected_cols:
         if col not in df.columns:
@@ -57,24 +57,26 @@ def load_data():
     return df
 
 def recalc_balances(df):
-    """Recalculate balances from Excel file safely"""
-    gcash_balance = CAPITAL
     total_cash = 0
     total_profit = 0
+    
     for _, row in df.iterrows():
         txn_type = row.get("Type", "")
         amount = row.get("Amount", 0)
         fee = row.get("Service Fee", 0)
+        
         if pd.isna(txn_type) or pd.isna(amount):
             continue
+        
         if txn_type == "Cash In":
-            gcash_balance += amount
-            total_cash += amount
-            total_profit += fee
+            total_cash += amount  # Sum total cash in
+            total_profit += fee    # Increment profit by service fee for cash in
         elif txn_type == "Cash Out":
-            total_cash -= amount
-            gcash_balance += amount
-            total_profit += fee
+            if total_cash >= amount:
+                total_cash -= amount  # Deduct cash out if sufficient
+                total_profit += fee     # Increment profit by service fee for cash out
+
+    gcash_balance = CAPITAL - total_cash  # Calculate GCash balance
     return gcash_balance, total_cash, total_profit
 
 # ================= LOAD DATA =================
@@ -86,24 +88,13 @@ if "gcash_balance" not in st.session_state or \
    "total_profit" not in st.session_state:
     st.session_state.gcash_balance, st.session_state.total_cash, st.session_state.total_profit = recalc_balances(df)
 
-# ================= RESET HISTORY BUTTON =================
-st.sidebar.subheader("⚠ Reset History")
-if st.sidebar.button("Reset All Transaction History"):
-    df = pd.DataFrame(columns=["Date", "Type", "Customer", "Amount", "Service Fee", "Screenshot", "Remarks"])
-    df.to_excel(EXCEL_FILE, index=False)
-    st.session_state.gcash_balance = CAPITAL
-    st.session_state.total_cash = 0
-    st.session_state.total_profit = 0
-    st.success("✅ All history cleared. Starting fresh!")
-    st.rerun()
-
 # ================= HEADER =================
 st.title("💙 GCash Cash In / Cash Out System")
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("💼 Capital", f"₱{CAPITAL:,.2f}")
-c2.metric("💰 GCash Balance", f"₱{st.session_state.gcash_balance:,.2f}")
+c2.metric("💰 GCash Balance", f"₱{CAPITAL - st.session_state.total_cash:,.2f}")  # GCash balance calculation
 c3.metric("🤑 Total Cash Handed", f"₱{st.session_state.total_cash:,.2f}")
-c4.metric("💵 Total Profit", f"₱{st.session_state.total_profit:,.2f}")
+c4.metric("💵 Total Profit", f"₱{st.session_state.total_profit:,.2f}")  # Includes service fees from both cash-ins and cash-outs
 
 # ================= NAVIGATION =================
 tab1, tab2, tab3 = st.tabs([
@@ -143,16 +134,14 @@ with tab1:
 
             # ================= UPDATE BALANCES =================
             if txn_type == "Cash In":
-                st.session_state.gcash_balance += amount
-                st.session_state.total_cash += amount
-                st.session_state.total_profit += fee
+                st.session_state.total_cash += amount  # Add to total cash in
+                st.session_state.total_profit += fee    # Increment profit by the service fee for cash in
             elif txn_type == "Cash Out":
                 if amount > st.session_state.total_cash:
                     st.error("❌ Insufficient cash to cash out.")
                     st.stop()
-                st.session_state.total_cash -= amount
-                st.session_state.gcash_balance += amount
-                st.session_state.total_profit += fee
+                st.session_state.total_cash -= amount  # Deduct amount for cash out
+                st.session_state.total_profit += fee     # Increment profit by the service fee for cash out
 
             df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
             save_with_images(df)
@@ -165,20 +154,47 @@ with tab2:
     if df.empty:
         st.info("No transactions yet.")
     else:
-        def thumb(file):
-            if isinstance(file, str) and file:
-                path = os.path.join(UPLOAD_FOLDER, file)
-                if os.path.exists(path):
-                    return f'<img src="{path}" width="60">'
-            return ''
-        view_df = df.copy()
-        view_df["Screenshot"] = view_df["Screenshot"].apply(thumb)
-        st.write(view_df.to_html(escape=False, index=False), unsafe_allow_html=True)
-        st.download_button(
-            "⬇ Download Excel",
-            open(EXCEL_FILE, "rb"),
-            file_name="GCash_Cash_In_Cash_Out_Record.xlsx"
+        # Make a multi-select box for multiple deletions
+        selected_indices = st.multiselect(
+            "Select transactions to delete",
+            options=[f"{index} | {row['Customer']} | ₱{row['Amount']:.2f}" for index, row in df.iterrows()]
         )
+        
+        if st.button("❌ Delete Selected Transactions"):
+            if selected_indices:
+                for selected in selected_indices:
+                    idx = int(selected.split(" | ")[0])  # Extract index for deletion
+                    file = df.loc[idx, "Screenshot"]
+                    transaction_type = df.loc[idx, "Type"]
+                    amount = df.loc[idx, "Amount"]
+                    fee = df.loc[idx, "Service Fee"]
+                    
+                    # Adjust balances based on transaction type when deleting
+                    if transaction_type == "Cash In":
+                        st.session_state.total_cash -= amount
+                        st.session_state.total_profit -= fee  # Decrement profit by the service fee for cash in
+                    elif transaction_type == "Cash Out":
+                        st.session_state.total_cash += amount
+                        st.session_state.total_profit -= fee   # Decrement profit by the service fee for cash out
+
+                    # Remove the associated screenshot
+                    path = os.path.join(UPLOAD_FOLDER, file)
+                    if os.path.exists(path):
+                        os.remove(path)
+
+                    # Drop the transaction from the dataframe
+                    df.drop(index=idx, inplace=True)
+
+                df.reset_index(drop=True, inplace=True)
+                save_with_images(df)
+                st.success("✅ Selected transactions deleted")
+                st.session_state.gcash_balance, st.session_state.total_cash, st.session_state.total_profit = recalc_balances(df)  # Recalculate balances
+                st.rerun()  # Refresh the page to reflect changes
+            else:
+                st.warning("Please select at least one transaction to delete.")
+        
+        # Show transaction history in the app
+        st.write(df)
 
 # ================= TAB 3 =================
 with tab3:
@@ -197,38 +213,4 @@ with tab3:
             else:
                 st.error("Invalid credentials")
     else:
-        if df.empty:
-            st.info("No transactions available to delete.")
-        else:
-            df["label"] = df.index.astype(str) + " | " + df["Customer"] + " | ₱" + df["Amount"].astype(str)
-            selected = st.selectbox("Select transaction", df["label"])
-            confirm = st.checkbox("⚠ I confirm deletion")
-            if st.button("❌ Delete Selected Transaction"):
-                if confirm:
-                    idx = int(selected.split(" | ")[0])
-                    file = df.loc[idx, "Screenshot"]
-                    transaction_type = df.loc[idx, "Type"]
-                    amount = df.loc[idx, "Amount"]
-                    fee = df.loc[idx, "Service Fee"]
-
-                    # Adjust balances when deleting
-                    if transaction_type == "Cash In":
-                        st.session_state.total_cash -= amount
-                        st.session_state.gcash_balance -= amount
-                        st.session_state.total_profit -= fee
-                    elif transaction_type == "Cash Out":
-                        st.session_state.total_cash += amount
-                        st.session_state.gcash_balance -= amount
-                        st.session_state.total_profit -= fee
-
-                    path = os.path.join(UPLOAD_FOLDER, file)
-                    if os.path.exists(path):
-                        os.remove(path)
-
-                    df.drop(index=idx, inplace=True)
-                    df.reset_index(drop=True, inplace=True)
-                    save_with_images(df)
-                    st.success("✅ Transaction deleted")
-                    st.rerun()
-                else:
-                    st.warning("Please confirm deletion first.")
+        st.info("Use the transaction history tab to delete transactions.")
