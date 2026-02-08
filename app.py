@@ -4,6 +4,7 @@ from datetime import datetime
 import os
 import math
 from PIL import Image
+from io import BytesIO
 from openpyxl import load_workbook
 from openpyxl.drawing.image import Image as XLImage
 
@@ -79,6 +80,21 @@ def recalc_balances(df):
     gcash_balance = CAPITAL - total_cash  # Calculate GCash balance
     return gcash_balance, total_cash, total_profit
 
+def generate_receipt(transaction_data):
+    receipt = f"""
+    🧾 GCash Receipt
+    ----------------------
+    Date: {transaction_data['Date']}
+    Type: {transaction_data['Type']}
+    Customer: {transaction_data['Customer']}
+    Amount: ₱{transaction_data['Amount']:.2f}
+    Service Fee: ₱{transaction_data['Service Fee']:.2f}
+    Remarks: {transaction_data['Remarks']}
+    ----------------------
+    Thank you for your transaction!
+    """
+    return receipt
+
 # ================= LOAD DATA =================
 df = load_data()
 
@@ -92,15 +108,15 @@ if "gcash_balance" not in st.session_state or \
 st.title("💙 GCash Cash In / Cash Out System")
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("💼 Capital", f"₱{CAPITAL:,.2f}")
-c2.metric("💰 GCash Balance", f"₱{CAPITAL - st.session_state.total_cash:,.2f}")  # GCash balance calculation
+c2.metric("💰 GCash Balance", f"₱{CAPITAL - st.session_state.total_cash:,.2f}")
 c3.metric("🤑 Total Cash Handed", f"₱{st.session_state.total_cash:,.2f}")
-c4.metric("💵 Total Profit", f"₱{st.session_state.total_profit:,.2f}")  # Includes service fees from both cash-ins and cash-outs
+c4.metric("💵 Total Profit", f"₱{st.session_state.total_profit:,.2f}")
 
 # ================= NAVIGATION =================
 tab1, tab2, tab3 = st.tabs([
     "➕ New Transaction",
     "📋 Transaction History",
-    "🗑 Delete (Admin)"
+    "🧾 Create Receipt"
 ])
 
 # ================= TAB 1 =================
@@ -134,18 +150,23 @@ with tab1:
 
             # ================= UPDATE BALANCES =================
             if txn_type == "Cash In":
-                st.session_state.total_cash += amount  # Add to total cash in
-                st.session_state.total_profit += fee    # Increment profit by the service fee for cash in
+                st.session_state.total_cash += amount
+                st.session_state.total_profit += fee
             elif txn_type == "Cash Out":
                 if amount > st.session_state.total_cash:
                     st.error("❌ Insufficient cash to cash out.")
                     st.stop()
-                st.session_state.total_cash -= amount  # Deduct amount for cash out
-                st.session_state.total_profit += fee     # Increment profit by the service fee for cash out
+                st.session_state.total_cash -= amount
+                st.session_state.total_profit += fee
 
             df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
             save_with_images(df)
             st.success("✅ Transaction saved")
+            
+            # Generate and display receipt
+            receipt = generate_receipt(new_row)
+            st.text_area("🧾 Receipt", value=receipt, height=200)
+
             st.rerun()
 
 # ================= TAB 2 =================
@@ -154,63 +175,63 @@ with tab2:
     if df.empty:
         st.info("No transactions yet.")
     else:
-        # Make a multi-select box for multiple deletions
         selected_indices = st.multiselect(
             "Select transactions to delete",
-            options=[f"{index} | {row['Customer']} | ₱{row['Amount']:.2f}" for index, row in df.iterrows()]
+            options=[f"{index} | {row['Type']} | {row['Customer']} | ₱{row['Amount']:.2f}" for index, row in df.iterrows()]
         )
-        
+
         if st.button("❌ Delete Selected Transactions"):
             if selected_indices:
+                adjustments = []  # Keep track of changes
                 for selected in selected_indices:
-                    idx = int(selected.split(" | ")[0])  # Extract index for deletion
-                    file = df.loc[idx, "Screenshot"]
+                    idx = int(selected.split(" | ")[0])
                     transaction_type = df.loc[idx, "Type"]
                     amount = df.loc[idx, "Amount"]
                     fee = df.loc[idx, "Service Fee"]
-                    
-                    # Adjust balances based on transaction type when deleting
-                    if transaction_type == "Cash In":
-                        st.session_state.total_cash -= amount
-                        st.session_state.total_profit -= fee  # Decrement profit by the service fee for cash in
-                    elif transaction_type == "Cash Out":
-                        st.session_state.total_cash += amount
-                        st.session_state.total_profit -= fee   # Decrement profit by the service fee for cash out
 
-                    # Remove the associated screenshot
+                    if transaction_type == "Cash In":
+                        adjustments.append((amount, fee))
+                    elif transaction_type == "Cash Out":
+                        adjustments.append((-amount, -fee))
+
+                    # Remove the screenshot if it exists
+                    file = df.loc[idx, "Screenshot"]
                     path = os.path.join(UPLOAD_FOLDER, file)
                     if os.path.exists(path):
                         os.remove(path)
 
-                    # Drop the transaction from the dataframe
-                    df.drop(index=idx, inplace=True)
-
+                df = df.drop(index=[int(selected.split(" | ")[0]) for selected in selected_indices])
                 df.reset_index(drop=True, inplace=True)
+
+                for amount, fee in adjustments:
+                    st.session_state.total_cash -= amount
+                    st.session_state.total_profit -= fee
+
                 save_with_images(df)
                 st.success("✅ Selected transactions deleted")
-                st.session_state.gcash_balance, st.session_state.total_cash, st.session_state.total_profit = recalc_balances(df)  # Recalculate balances
-                st.rerun()  # Refresh the page to reflect changes
+                st.session_state.gcash_balance, st.session_state.total_cash, st.session_state.total_profit = recalc_balances(df)
+                st.rerun()
             else:
                 st.warning("Please select at least one transaction to delete.")
         
-        # Show transaction history in the app
         st.write(df)
 
 # ================= TAB 3 =================
 with tab3:
-    st.subheader("🗑 Delete Transaction (Admin Only)")
-    if "admin" not in st.session_state:
-        st.session_state.admin = False
+    st.subheader("🧾 Create Receipt")
+    
+    # Dropdown to select transactions for receipt
+    transaction_options = [
+        f"{index} | {row['Type']} | {row['Customer']} | ₱{row['Amount']:.2f}" 
+        for index, row in df.iterrows() if row['Type'] in ["Cash In", "Cash Out"]
+    ]
 
-    if not st.session_state.admin:
-        u = st.text_input("Admin Username")
-        p = st.text_input("Admin Password", type="password")
-        if st.button("🔒 Login"):
-            if u == "admin" and p == "adminpass":
-                st.session_state.admin = True
-                st.success("Logged in")
-                st.rerun()
-            else:
-                st.error("Invalid credentials")
-    else:
-        st.info("Use the transaction history tab to delete transactions.")
+    selected_transaction = st.selectbox("Select Transaction for Receipt", options=transaction_options)
+    
+    if selected_transaction:
+        idx = int(selected_transaction.split(" | ")[0])  # Get selected index
+        transaction_data = df.loc[idx]
+
+        if st.button("Generate Receipt"):
+            receipt = generate_receipt(transaction_data)  # Use selected transaction data
+            st.text_area("🧾 Receipt", value=receipt, height=200)
