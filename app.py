@@ -91,6 +91,17 @@ if "gcash_balance" not in st.session_state or \
    "total_profit" not in st.session_state:
     st.session_state.gcash_balance, st.session_state.total_cash, st.session_state.total_profit = recalc_balances(df)
 
+# ================= RESET HISTORY BUTTON =================
+st.sidebar.subheader("⚠ Reset History")
+if st.sidebar.button("Reset All Transaction History"):
+    df = pd.DataFrame(columns=["Date", "Type", "Customer", "Amount", "Service Fee", "Screenshot", "Remarks"])
+    df.to_excel(EXCEL_FILE, index=False)
+    st.session_state.gcash_balance = CAPITAL
+    st.session_state.total_cash = 0
+    st.session_state.total_profit = 0
+    st.success("✅ All history cleared. Starting fresh!")
+    st.rerun()
+
 # ================= HEADER =================
 st.title("💙 GCash Cash In / Cash Out System")
 c1, c2, c3, c4 = st.columns(4)
@@ -219,10 +230,4 @@ with tab3:
                     if os.path.exists(path):
                         os.remove(path)
 
-                    df.drop(index=idx, inplace=True)
-                    df.reset_index(drop=True, inplace=True)
-                    save_with_images(df)
-                    st.success("✅ Transaction deleted")
-                    st.rerun()
-                else:
-                    st.warning("Please confirm deletion first.")
+                    df.drop(index
