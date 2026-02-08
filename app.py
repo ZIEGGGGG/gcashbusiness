@@ -49,31 +49,46 @@ def load_data():
         df = pd.read_excel(EXCEL_FILE)
     else:
         df = create_excel()
+
+    # Ensure all expected columns exist
+    expected_cols = ["Date", "Type", "Customer", "Amount", "Service Fee", "Screenshot", "Remarks"]
+    for col in expected_cols:
+        if col not in df.columns:
+            df[col] = ""
     return df
 
 def recalc_balances(df):
-    """Recalculate balances from Excel file"""
+    """Recalculate balances from Excel file safely"""
     gcash_balance = CAPITAL
     total_cash = 0
     total_profit = 0
+
     for _, row in df.iterrows():
-        amount = row["Amount"]
-        fee = row["Service Fee"]
-        if row["Type"] == "Cash In":
+        txn_type = row.get("Type", "")
+        amount = row.get("Amount", 0)
+        fee = row.get("Service Fee", 0)
+
+        if pd.isna(txn_type) or pd.isna(amount):
+            continue
+
+        if txn_type == "Cash In":
             gcash_balance += amount
             total_cash += amount
             total_profit += fee
-        elif row["Type"] == "Cash Out":
+        elif txn_type == "Cash Out":
             total_cash -= amount
             gcash_balance += amount
             total_profit += fee
+
     return gcash_balance, total_cash, total_profit
 
 # ================= LOAD DATA =================
 df = load_data()
 
 # ================= INITIALIZE BALANCES =================
-if "gcash_balance" not in st.session_state or "total_cash" not in st.session_state or "total_profit" not in st.session_state:
+if "gcash_balance" not in st.session_state or \
+   "total_cash" not in st.session_state or \
+   "total_profit" not in st.session_state:
     st.session_state.gcash_balance, st.session_state.total_cash, st.session_state.total_profit = recalc_balances(df)
 
 # ================= HEADER =================
